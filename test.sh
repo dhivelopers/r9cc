@@ -1,9 +1,11 @@
 #!/bin/bash
+
 assert() {
   expected="$1"
   input="$2"
 
-  cargo run "$input" > tmp.s
+  # use release binary
+  ./target/release/r9cc "$input" > tmp.s
   cc -o tmp tmp.s
   ./tmp
   actual="$?"
@@ -15,6 +17,9 @@ assert() {
     exit 1
   fi
 }
+
+# build release binary
+cargo build --release
 
 assert 0 0
 assert 42 42
