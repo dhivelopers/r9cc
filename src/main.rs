@@ -9,6 +9,6 @@ fn main() {
     println!(".intel_syntax noprefix");
     println!(".global main");
     println!("main:");
-    println!("\tmov rax, {}", ret_value);
+    println!("\tmov rax, {ret_value}");
     println!("\tret");
 }
