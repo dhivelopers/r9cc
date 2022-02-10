@@ -1,0 +1,9 @@
+version: '3'
+
+services:
+  r9cc:
+    image: amd64/rust:latest
+    volumes:
+      - ./:/work
+    working_dir: /work
+    tty: true
