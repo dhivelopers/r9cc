@@ -7,12 +7,8 @@ fn main() {
         eprintln!("usage: ./r9cc <number>");
         process::exit(1);
     });
-    let code = tokenize(&arg); // TODO!
-    println!(".intel_syntax noprefix");
-    println!(".global main");
-    println!("main:");
-    // println!("\tmov rax, {}", ret_value);
-    println!("\tret");
+    let code = compile(&arg);
+    println!("{code}");
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -121,8 +117,50 @@ impl<'a> Iterator for Tokens<'a> {
     }
 }
 
-fn tokenize(input: &str) {
-    todo!()
+fn compile(input: &str) -> String {
+    let mut tokens = Tokens::new(input);
+    let mut assembly: Vec<String> = vec![
+        ".intel_syntax noprefix".to_string(),
+        ".global main".to_string(),
+        "main:".to_string(),
+    ];
+    if let Some(first_token) = tokens.next() {
+        // first_token must be Number.
+        if first_token.kind != TokenKind::Number {
+            println!("first_token must be Number.");
+            process::exit(1);
+        }
+        assembly.push(format!("\tmov rax, {}", first_token.value.unwrap())); // unwrap, because value checked above.
+    }
+    while let Some(token) = tokens.next() {
+        match token.kind {
+            TokenKind::Plus => {
+                if let Some(num_tok) = tokens.next() {
+                    if num_tok.kind == TokenKind::Number {
+                        assembly.push(format!("\tadd rax, {}", num_tok.value.unwrap()));
+                    } else {
+                        println!("+<number>");
+                    }
+                } else {
+                    println!("+<something>");
+                }
+            }
+            TokenKind::Minus => {
+                if let Some(num_tok) = tokens.next() {
+                    if num_tok.kind == TokenKind::Number {
+                        assembly.push(format!("\tsub rax, {}", num_tok.value.unwrap()));
+                    } else {
+                        println!("-<number>");
+                    }
+                } else {
+                    println!("-<something>");
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+    assembly.push("\tret".to_string());
+    assembly.join("\n")
 }
 
 #[test]
