@@ -4,7 +4,8 @@ use std::process;
 
 fn main() {
     let arg = env::args().nth(1).unwrap_or_else(|| {
-        eprintln!("usage: ./r9cc <number>");
+        eprintln!("usage  : ./r9cc \"<code>\"");
+        eprintln!("example: ./r9cc \"4+3+10-9\"");
         process::exit(1);
     });
     let code = compile(&arg);
@@ -14,7 +15,6 @@ fn main() {
 #[derive(Debug, Clone, PartialEq)]
 struct Token<'a> {
     text: &'a str,
-    value: Option<usize>, // if token is Number
     kind: TokenKind,
     span: Range<usize>, // Token place in Tokens
 }
@@ -77,10 +77,8 @@ impl<'a> Tokens<'a> {
         let (text, span) = self
             .take_while(|c| matches!(c, '0'..='9'))
             .expect("Error: No digit.");
-        let number: usize = text.parse().unwrap(); // text must be number, because text is collected number chars
         Token {
             text,
-            value: Some(number),
             kind: TokenKind::Number,
             span,
         }
@@ -97,7 +95,6 @@ impl<'a> Tokens<'a> {
         };
         Token {
             text: symbol,
-            value: None,
             kind,
             span: start..end,
         }
@@ -108,6 +105,14 @@ impl<'a> Iterator for Tokens<'a> {
     type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // ignore spaces
+        while let Some(x) = self.peek() {
+            if x.is_ascii_whitespace() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
         return match self.peek()? {
             '+' => Some(self.tokenize_reserved("+")),
             '-' => Some(self.tokenize_reserved("-")),
@@ -130,14 +135,14 @@ fn compile(input: &str) -> String {
             println!("first_token must be Number.");
             process::exit(1);
         }
-        assembly.push(format!("\tmov rax, {}", first_token.value.unwrap())); // unwrap, because value checked above.
+        assembly.push(format!("\tmov rax, {}", first_token.text));
     }
     while let Some(token) = tokens.next() {
         match token.kind {
             TokenKind::Plus => {
                 if let Some(num_tok) = tokens.next() {
                     if num_tok.kind == TokenKind::Number {
-                        assembly.push(format!("\tadd rax, {}", num_tok.value.unwrap()));
+                        assembly.push(format!("\tadd rax, {}", num_tok.text));
                     } else {
                         println!("+<number>");
                     }
@@ -148,7 +153,7 @@ fn compile(input: &str) -> String {
             TokenKind::Minus => {
                 if let Some(num_tok) = tokens.next() {
                     if num_tok.kind == TokenKind::Number {
-                        assembly.push(format!("\tsub rax, {}", num_tok.value.unwrap()));
+                        assembly.push(format!("\tsub rax, {}", num_tok.text));
                     } else {
                         println!("-<number>");
                     }
@@ -171,7 +176,6 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "5",
-            value: Some(5),
             kind: TokenKind::Number,
             span: 0..1
         })
@@ -180,7 +184,6 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "+",
-            value: None,
             kind: TokenKind::Plus,
             span: 1..2
         })
@@ -189,9 +192,55 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "20",
-            value: Some(20),
             kind: TokenKind::Number,
             span: 2..4
         })
     );
+}
+
+#[test]
+fn test_whitespace() {
+    let code = "  3  -1  +20  ";
+    let mut tokens = Tokens::new(code);
+    assert_eq!(
+        tokens.next(),
+        Some(Token {
+            text: "3",
+            kind: TokenKind::Number,
+            span: 2..3
+        })
+    );
+    assert_eq!(
+        tokens.next(),
+        Some(Token {
+            text: "-",
+            kind: TokenKind::Minus,
+            span: 5..6
+        })
+    );
+    assert_eq!(
+        tokens.next(),
+        Some(Token {
+            text: "1",
+            kind: TokenKind::Number,
+            span: 6..7
+        })
+    );
+    assert_eq!(
+        tokens.next(),
+        Some(Token {
+            text: "+",
+            kind: TokenKind::Plus,
+            span: 9..10
+        })
+    );
+    assert_eq!(
+        tokens.next(),
+        Some(Token {
+            text: "20",
+            kind: TokenKind::Number,
+            span: 10..12
+        })
+    );
+    assert_eq!(tokens.next(), None);
 }
