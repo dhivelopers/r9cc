@@ -15,7 +15,6 @@ fn main() {
 #[derive(Debug, Clone, PartialEq)]
 struct Token<'a> {
     text: &'a str,
-    value: Option<usize>, // if token is Number
     kind: TokenKind,
     span: Range<usize>, // Token place in Tokens
 }
@@ -78,10 +77,8 @@ impl<'a> Tokens<'a> {
         let (text, span) = self
             .take_while(|c| matches!(c, '0'..='9'))
             .expect("Error: No digit.");
-        let number: usize = text.parse().unwrap(); // text must be number, because text is collected number chars
         Token {
             text,
-            value: Some(number),
             kind: TokenKind::Number,
             span,
         }
@@ -98,7 +95,6 @@ impl<'a> Tokens<'a> {
         };
         Token {
             text: symbol,
-            value: None,
             kind,
             span: start..end,
         }
@@ -131,14 +127,14 @@ fn compile(input: &str) -> String {
             println!("first_token must be Number.");
             process::exit(1);
         }
-        assembly.push(format!("\tmov rax, {}", first_token.value.unwrap())); // unwrap, because value checked above.
+        assembly.push(format!("\tmov rax, {}", first_token.text));
     }
     while let Some(token) = tokens.next() {
         match token.kind {
             TokenKind::Plus => {
                 if let Some(num_tok) = tokens.next() {
                     if num_tok.kind == TokenKind::Number {
-                        assembly.push(format!("\tadd rax, {}", num_tok.value.unwrap()));
+                        assembly.push(format!("\tadd rax, {}", num_tok.text));
                     } else {
                         println!("+<number>");
                     }
@@ -149,7 +145,7 @@ fn compile(input: &str) -> String {
             TokenKind::Minus => {
                 if let Some(num_tok) = tokens.next() {
                     if num_tok.kind == TokenKind::Number {
-                        assembly.push(format!("\tsub rax, {}", num_tok.value.unwrap()));
+                        assembly.push(format!("\tsub rax, {}", num_tok.text));
                     } else {
                         println!("-<number>");
                     }
@@ -172,7 +168,6 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "5",
-            value: Some(5),
             kind: TokenKind::Number,
             span: 0..1
         })
@@ -181,7 +176,6 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "+",
-            value: None,
             kind: TokenKind::Plus,
             span: 1..2
         })
@@ -190,7 +184,6 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "20",
-            value: Some(20),
             kind: TokenKind::Number,
             span: 2..4
         })
