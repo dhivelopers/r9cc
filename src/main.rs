@@ -105,6 +105,14 @@ impl<'a> Iterator for Tokens<'a> {
     type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // ignore spaces
+        while let Some(x) = self.peek() {
+            if x.is_ascii_whitespace() {
+                self.advance();
+            }else{
+                break;
+            }
+        }
         return match self.peek()? {
             '+' => Some(self.tokenize_reserved("+")),
             '-' => Some(self.tokenize_reserved("-")),
@@ -187,5 +195,55 @@ fn test_tokens_iterator() {
             kind: TokenKind::Number,
             span: 2..4
         })
+    );
+}
+
+#[test]
+fn test_whitespace() {
+    let code = "  3  -1  +20  ";
+    let mut tokens = Tokens::new(code);
+    assert_eq!(
+        tokens.next(),
+        Some(Token {
+            text: "3",
+            kind: TokenKind::Number,
+            span: 2..3
+        })
+    );
+    assert_eq!(
+        tokens.next(),
+        Some(Token {
+            text: "-",
+            kind: TokenKind::Minus,
+            span: 5..6
+        })
+    );
+    assert_eq!(
+        tokens.next(),
+        Some(Token {
+            text: "1",
+            kind: TokenKind::Number,
+            span: 6..7
+        })
+    );
+    assert_eq!(
+        tokens.next(),
+        Some(Token {
+            text: "+",
+            kind: TokenKind::Plus,
+            span: 9..10
+        })
+    );
+    assert_eq!(
+        tokens.next(),
+        Some(Token {
+            text: "20",
+            kind: TokenKind::Number,
+            span: 10..12
+        })
+    );
+    assert_eq!(
+        tokens.next(),
+        None
     );
 }
