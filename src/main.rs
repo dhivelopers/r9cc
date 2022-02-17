@@ -109,7 +109,7 @@ impl<'a> Iterator for Tokens<'a> {
         while let Some(x) = self.peek() {
             if x.is_ascii_whitespace() {
                 self.advance();
-            }else{
+            } else {
                 break;
             }
         }
@@ -242,8 +242,5 @@ fn test_whitespace() {
             span: 10..12
         })
     );
-    assert_eq!(
-        tokens.next(),
-        None
-    );
+    assert_eq!(tokens.next(), None);
 }
