@@ -4,7 +4,8 @@ use std::process;
 
 fn main() {
     let arg = env::args().nth(1).unwrap_or_else(|| {
-        eprintln!("usage: ./r9cc <number>");
+        eprintln!("usage  : ./r9cc \"<code>\"");
+        eprintln!("example: ./r9cc \"4+3+10-9\"");
         process::exit(1);
     });
     let code = compile(&arg);
