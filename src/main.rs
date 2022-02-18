@@ -21,9 +21,11 @@ struct Token<'a> {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum TokenKind {
-    Number,
-    Plus,
-    Minus,
+    Number(i64),
+    Add,
+    Sub,
+    Mul,
+    Div,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,7 +81,7 @@ impl<'a> Tokens<'a> {
             .expect("Error: No digit.");
         Token {
             text,
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(text.parse().expect("Number parse failed.")),
             span,
         }
     }
@@ -89,8 +91,8 @@ impl<'a> Tokens<'a> {
         self.advance();
         let end = self.pos;
         let kind = match symbol {
-            "+" => TokenKind::Plus,
-            "-" => TokenKind::Minus,
+            "+" => TokenKind::Add,
+            "-" => TokenKind::Sub,
             _ => unreachable!(), // reservedは確定しているのでunreachable
         };
         Token {
@@ -145,6 +147,13 @@ fn report_parse_error(src: &str, span: Range<usize>, message: String, src_info: 
     );
 }
 
+// #[derive(Debug, Clone)]
+// struct Node {
+//     kind: TokenKind,
+//     lhs: Option<Box<Node>>,
+//     rhs: Option<Box<Node>>,
+// }
+
 fn compile(input: &str) -> String {
     let mut tokens = Tokens::new(input);
     let mut assembly: Vec<String> = vec![
@@ -154,31 +163,38 @@ fn compile(input: &str) -> String {
     ];
     if let Some(first_token) = tokens.next() {
         // first_token must be Number.
-        if first_token.kind != TokenKind::Number {
-            report_parse_error(
-                input,
-                first_token.span,
-                "[Error] Expression starts with `Number`.".to_string(),
-                "This is not `Number`".to_string(),
-            );
-            process::exit(1);
+        match first_token.kind {
+            TokenKind::Number(_) => {
+                assembly.push(format!("\tmov rax, {}", first_token.text));
+            }
+            _ => {
+                report_parse_error(
+                    input,
+                    first_token.span,
+                    "[Error] Expression starts with `Number`.".to_string(),
+                    "This is not `Number`".to_string(),
+                );
+                process::exit(1);
+            }
         }
-        assembly.push(format!("\tmov rax, {}", first_token.text));
     }
     while let Some(token) = tokens.next() {
         match token.kind {
-            TokenKind::Plus => {
+            TokenKind::Add => {
                 if let Some(num_tok) = tokens.next() {
-                    if num_tok.kind == TokenKind::Number {
-                        assembly.push(format!("\tadd rax, {}", num_tok.text));
-                    } else {
-                        report_parse_error(
-                            input,
-                            num_tok.span,
-                            "[Error] `Number` not found after `+`".to_string(),
-                            "This is not `Number`".to_string(),
-                        );
-                        process::exit(1);
+                    match num_tok.kind {
+                        TokenKind::Number(_) => {
+                            assembly.push(format!("\tadd rax, {}", num_tok.text));
+                        }
+                        _ => {
+                            report_parse_error(
+                                input,
+                                num_tok.span,
+                                "[Error] `Number` not found after `+`".to_string(),
+                                "This is not `Number`".to_string(),
+                            );
+                            process::exit(1);
+                        }
                     }
                 } else {
                     report_parse_error(
@@ -190,18 +206,21 @@ fn compile(input: &str) -> String {
                     process::exit(1);
                 }
             }
-            TokenKind::Minus => {
+            TokenKind::Sub => {
                 if let Some(num_tok) = tokens.next() {
-                    if num_tok.kind == TokenKind::Number {
-                        assembly.push(format!("\tsub rax, {}", num_tok.text));
-                    } else {
-                        report_parse_error(
-                            input,
-                            num_tok.span,
-                            "[Error] `Number` not found after `-`".to_string(),
-                            "This is not `Number`".to_string(),
-                        );
-                        process::exit(1);
+                    match num_tok.kind {
+                        TokenKind::Number(_) => {
+                            assembly.push(format!("\tsub rax, {}", num_tok.text));
+                        }
+                        _ => {
+                            report_parse_error(
+                                input,
+                                num_tok.span,
+                                "[Error] `Number` not found after `-`".to_string(),
+                                "This is not `Number`".to_string(),
+                            );
+                            process::exit(1);
+                        }
                     }
                 } else {
                     report_parse_error(
@@ -236,7 +255,7 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "5",
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(5),
             span: 0..1
         })
     );
@@ -244,7 +263,7 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "+",
-            kind: TokenKind::Plus,
+            kind: TokenKind::Add,
             span: 1..2
         })
     );
@@ -252,7 +271,7 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "20",
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(20),
             span: 2..4
         })
     );
@@ -266,7 +285,7 @@ fn test_whitespace() {
         tokens.next(),
         Some(Token {
             text: "3",
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(3),
             span: 2..3
         })
     );
@@ -274,7 +293,7 @@ fn test_whitespace() {
         tokens.next(),
         Some(Token {
             text: "-",
-            kind: TokenKind::Minus,
+            kind: TokenKind::Sub,
             span: 5..6
         })
     );
@@ -282,7 +301,7 @@ fn test_whitespace() {
         tokens.next(),
         Some(Token {
             text: "1",
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(1),
             span: 6..7
         })
     );
@@ -290,7 +309,7 @@ fn test_whitespace() {
         tokens.next(),
         Some(Token {
             text: "+",
-            kind: TokenKind::Plus,
+            kind: TokenKind::Add,
             span: 9..10
         })
     );
@@ -298,7 +317,7 @@ fn test_whitespace() {
         tokens.next(),
         Some(Token {
             text: "20",
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(20),
             span: 10..12
         })
     );
