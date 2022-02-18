@@ -91,13 +91,19 @@ impl<'a> Tokens<'a> {
         let kind = match symbol {
             "+" => TokenKind::Plus,
             "-" => TokenKind::Minus,
-            _ => unreachable!(),
+            _ => unreachable!(), // reservedは確定しているのでunreachable
         };
         Token {
             text: symbol,
             kind,
             span: start..end,
         }
+    }
+
+    fn report_tokenize_error(&self, message: String, src_info: String) {
+        eprintln!("{}", message);
+        eprintln!("{}", self.src);
+        eprintln!("{}^ {}", " ".repeat(self.pos), src_info);
     }
 }
 
@@ -117,9 +123,26 @@ impl<'a> Iterator for Tokens<'a> {
             '+' => Some(self.tokenize_reserved("+")),
             '-' => Some(self.tokenize_reserved("-")),
             '0'..='9' => Some(self.tokenize_number()),
-            _ => unreachable!(),
+            _ => {
+                self.report_tokenize_error(
+                    "[Error] Cannot tokenize".to_string(),
+                    "cannot tokenize this".to_string(),
+                );
+                process::exit(1);
+            }
         };
     }
+}
+
+fn report_parse_error(src: &str, span: Range<usize>, message: String, src_info: String) {
+    eprintln!("{}", message);
+    eprintln!("{}", src);
+    eprintln!(
+        "{}{} {}",
+        " ".repeat(span.start),
+        "^".repeat(span.len()),
+        src_info
+    );
 }
 
 fn compile(input: &str) -> String {
@@ -132,7 +155,12 @@ fn compile(input: &str) -> String {
     if let Some(first_token) = tokens.next() {
         // first_token must be Number.
         if first_token.kind != TokenKind::Number {
-            println!("first_token must be Number.");
+            report_parse_error(
+                input,
+                first_token.span,
+                "[Error] Expression starts with `Number`.".to_string(),
+                "This is not `Number`".to_string(),
+            );
             process::exit(1);
         }
         assembly.push(format!("\tmov rax, {}", first_token.text));
@@ -144,10 +172,22 @@ fn compile(input: &str) -> String {
                     if num_tok.kind == TokenKind::Number {
                         assembly.push(format!("\tadd rax, {}", num_tok.text));
                     } else {
-                        println!("+<number>");
+                        report_parse_error(
+                            input,
+                            num_tok.span,
+                            "[Error] `Number` not found after `+`".to_string(),
+                            "This is not `Number`".to_string(),
+                        );
+                        process::exit(1);
                     }
                 } else {
-                    println!("+<something>");
+                    report_parse_error(
+                        input,
+                        token.span,
+                        "[Error] end with `+`".to_string(),
+                        "This is end of source code, add `Number` after `+` if needed".to_string(),
+                    );
+                    process::exit(1);
                 }
             }
             TokenKind::Minus => {
@@ -155,13 +195,33 @@ fn compile(input: &str) -> String {
                     if num_tok.kind == TokenKind::Number {
                         assembly.push(format!("\tsub rax, {}", num_tok.text));
                     } else {
-                        println!("-<number>");
+                        report_parse_error(
+                            input,
+                            num_tok.span,
+                            "[Error] `Number` not found after `-`".to_string(),
+                            "This is not `Number`".to_string(),
+                        );
+                        process::exit(1);
                     }
                 } else {
-                    println!("-<something>");
+                    report_parse_error(
+                        input,
+                        token.span,
+                        "[Error] end with `-`".to_string(),
+                        "This is end of source code, add `Number` after `-` if needed".to_string(),
+                    );
+                    process::exit(1);
                 }
             }
-            _ => unreachable!(),
+            _ => {
+                report_parse_error(
+                    input,
+                    token.span,
+                    "[Error] Cannot parse".to_string(),
+                    "cannot parse this".to_string(),
+                );
+                process::exit(1);
+            }
         }
     }
     assembly.push("\tret".to_string());
@@ -244,3 +304,15 @@ fn test_whitespace() {
     );
     assert_eq!(tokens.next(), None);
 }
+
+// TODO error test
+// test case
+/*
+1+22 + foo + 123 => cannot tokenize this
++1+22 + foo + 123 => This is not `Number`
+1++++22 + foo + 123 => This is not `Number`
+1+ 123+ => This is end of source code, add `Number` after `+` if needed
+1+ 123- => This is end of source code, add `Number` after `-` if needed
+1+-22 + foo + 123 => This is not `Number`
+1 3 23 => cannot parse this
+*/
