@@ -91,7 +91,7 @@ impl<'a> Tokens<'a> {
         let kind = match symbol {
             "+" => TokenKind::Plus,
             "-" => TokenKind::Minus,
-            _ => unreachable!(),
+            _ => unreachable!(), // reservedは確定しているのでunreachable
         };
         Token {
             text: symbol,
@@ -117,7 +117,7 @@ impl<'a> Iterator for Tokens<'a> {
             '+' => Some(self.tokenize_reserved("+")),
             '-' => Some(self.tokenize_reserved("-")),
             '0'..='9' => Some(self.tokenize_number()),
-            _ => unreachable!(),
+            _ => unreachable!(), // TODO tokenize error message
         };
     }
 }
@@ -132,7 +132,7 @@ fn compile(input: &str) -> String {
     if let Some(first_token) = tokens.next() {
         // first_token must be Number.
         if first_token.kind != TokenKind::Number {
-            println!("first_token must be Number.");
+            println!("first_token must be Number."); // TODO parse error message
             process::exit(1);
         }
         assembly.push(format!("\tmov rax, {}", first_token.text));
@@ -144,10 +144,10 @@ fn compile(input: &str) -> String {
                     if num_tok.kind == TokenKind::Number {
                         assembly.push(format!("\tadd rax, {}", num_tok.text));
                     } else {
-                        println!("+<number>");
+                        println!("+<number>"); // TODO parse error message
                     }
                 } else {
-                    println!("+<something>");
+                    println!("+<something>"); // TODO parse error message
                 }
             }
             TokenKind::Minus => {
@@ -155,13 +155,13 @@ fn compile(input: &str) -> String {
                     if num_tok.kind == TokenKind::Number {
                         assembly.push(format!("\tsub rax, {}", num_tok.text));
                     } else {
-                        println!("-<number>");
+                        println!("-<number>"); // TODO parse error message
                     }
                 } else {
-                    println!("-<something>");
+                    println!("-<something>"); // TODO parse error message
                 }
             }
-            _ => unreachable!(),
+            _ => unreachable!(), // TODO parse error message
         }
     }
     assembly.push("\tret".to_string());
