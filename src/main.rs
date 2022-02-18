@@ -99,6 +99,12 @@ impl<'a> Tokens<'a> {
             span: start..end,
         }
     }
+
+    fn report_tokenize_error(&self, message: String, src_info: String) {
+        eprintln!("{}", message);
+        eprintln!("{}", self.src);
+        eprintln!("{}^ {}", " ".repeat(self.pos), src_info);
+    }
 }
 
 impl<'a> Iterator for Tokens<'a> {
@@ -117,7 +123,13 @@ impl<'a> Iterator for Tokens<'a> {
             '+' => Some(self.tokenize_reserved("+")),
             '-' => Some(self.tokenize_reserved("-")),
             '0'..='9' => Some(self.tokenize_number()),
-            _ => unreachable!(), // TODO tokenize error message
+            _ => {
+                self.report_tokenize_error(
+                    "[エラー] トークナイズ中にエラーが発生しました".to_string(),
+                    "トークナイズできません".to_string(),
+                );
+                process::exit(1);
+            }
         };
     }
 }
