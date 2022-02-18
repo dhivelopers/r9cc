@@ -1,4 +1,5 @@
 use std::env;
+use std::iter::Peekable;
 use std::ops::Range;
 use std::process;
 
@@ -8,8 +9,7 @@ fn main() {
         eprintln!("example: ./r9cc \"4+3+10-9\"");
         process::exit(1);
     });
-    let code = compile(&arg);
-    println!("{code}");
+    compile(&arg);
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18,12 +18,20 @@ struct Token<'a> {
     kind: TokenKind,
     span: Range<usize>, // Token place in Tokens
 }
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Separator {
+    RoundBracketL, // '('
+    RoundBracketR, // ')'
+}
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum TokenKind {
-    Number,
-    Plus,
-    Minus,
+    Number(i64),
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Sep(Separator),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,7 +87,7 @@ impl<'a> Tokens<'a> {
             .expect("Error: No digit.");
         Token {
             text,
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(text.parse().expect("Number parse failed.")),
             span,
         }
     }
@@ -89,8 +97,12 @@ impl<'a> Tokens<'a> {
         self.advance();
         let end = self.pos;
         let kind = match symbol {
-            "+" => TokenKind::Plus,
-            "-" => TokenKind::Minus,
+            "+" => TokenKind::Add,
+            "-" => TokenKind::Sub,
+            "*" => TokenKind::Mul,
+            "/" => TokenKind::Div,
+            "(" => TokenKind::Sep(Separator::RoundBracketL),
+            ")" => TokenKind::Sep(Separator::RoundBracketR),
             _ => unreachable!(), // reservedは確定しているのでunreachable
         };
         Token {
@@ -122,6 +134,10 @@ impl<'a> Iterator for Tokens<'a> {
         return match self.peek()? {
             '+' => Some(self.tokenize_reserved("+")),
             '-' => Some(self.tokenize_reserved("-")),
+            '*' => Some(self.tokenize_reserved("*")),
+            '/' => Some(self.tokenize_reserved("/")),
+            '(' => Some(self.tokenize_reserved("(")),
+            ')' => Some(self.tokenize_reserved(")")),
             '0'..='9' => Some(self.tokenize_number()),
             _ => {
                 self.report_tokenize_error(
@@ -134,98 +150,141 @@ impl<'a> Iterator for Tokens<'a> {
     }
 }
 
-fn report_parse_error(src: &str, span: Range<usize>, message: String, src_info: String) {
-    eprintln!("{}", message);
-    eprintln!("{}", src);
-    eprintln!(
-        "{}{} {}",
-        " ".repeat(span.start),
-        "^".repeat(span.len()),
-        src_info
-    );
+// fn report_parse_error(src: &str, span: Range<usize>, message: String, src_info: String) {
+//     eprintln!("{}", message);
+//     eprintln!("{}", src);
+//     eprintln!(
+//         "{}{} {}",
+//         " ".repeat(span.start),
+//         "^".repeat(span.len()),
+//         src_info
+//     );
+// }
+
+#[derive(Debug, Clone)]
+struct Node {
+    kind: TokenKind,
+    lhs: Option<Box<Node>>,
+    rhs: Option<Box<Node>>,
 }
 
-fn compile(input: &str) -> String {
-    let mut tokens = Tokens::new(input);
-    let mut assembly: Vec<String> = vec![
-        ".intel_syntax noprefix".to_string(),
-        ".global main".to_string(),
-        "main:".to_string(),
-    ];
-    if let Some(first_token) = tokens.next() {
-        // first_token must be Number.
-        if first_token.kind != TokenKind::Number {
-            report_parse_error(
-                input,
-                first_token.span,
-                "[Error] Expression starts with `Number`.".to_string(),
-                "This is not `Number`".to_string(),
-            );
-            process::exit(1);
-        }
-        assembly.push(format!("\tmov rax, {}", first_token.text));
-    }
-    while let Some(token) = tokens.next() {
-        match token.kind {
-            TokenKind::Plus => {
-                if let Some(num_tok) = tokens.next() {
-                    if num_tok.kind == TokenKind::Number {
-                        assembly.push(format!("\tadd rax, {}", num_tok.text));
-                    } else {
-                        report_parse_error(
-                            input,
-                            num_tok.span,
-                            "[Error] `Number` not found after `+`".to_string(),
-                            "This is not `Number`".to_string(),
-                        );
-                        process::exit(1);
-                    }
-                } else {
-                    report_parse_error(
-                        input,
-                        token.span,
-                        "[Error] end with `+`".to_string(),
-                        "This is end of source code, add `Number` after `+` if needed".to_string(),
-                    );
-                    process::exit(1);
-                }
-            }
-            TokenKind::Minus => {
-                if let Some(num_tok) = tokens.next() {
-                    if num_tok.kind == TokenKind::Number {
-                        assembly.push(format!("\tsub rax, {}", num_tok.text));
-                    } else {
-                        report_parse_error(
-                            input,
-                            num_tok.span,
-                            "[Error] `Number` not found after `-`".to_string(),
-                            "This is not `Number`".to_string(),
-                        );
-                        process::exit(1);
-                    }
-                } else {
-                    report_parse_error(
-                        input,
-                        token.span,
-                        "[Error] end with `-`".to_string(),
-                        "This is end of source code, add `Number` after `-` if needed".to_string(),
-                    );
-                    process::exit(1);
-                }
-            }
-            _ => {
-                report_parse_error(
-                    input,
-                    token.span,
-                    "[Error] Cannot parse".to_string(),
-                    "cannot parse this".to_string(),
-                );
-                process::exit(1);
-            }
+impl Node {
+    fn new(kind: TokenKind, lhs: Option<Node>, rhs: Option<Node>) -> Self {
+        Node {
+            kind,
+            lhs: lhs.map(Box::new),
+            rhs: rhs.map(Box::new),
         }
     }
-    assembly.push("\tret".to_string());
-    assembly.join("\n")
+
+    fn expr(tokens: &mut Peekable<Tokens>) -> Node {
+        let mut node = Self::mul(tokens);
+        while let Some(token) = tokens.peek() {
+            match token.kind {
+                TokenKind::Add => {
+                    // println!("dbg! ok?");
+                    tokens.next();
+                    node = Self::new(TokenKind::Add, Some(node), Some(Self::mul(tokens)));
+                }
+                TokenKind::Sub => {
+                    tokens.next();
+                    node = Self::new(TokenKind::Sub, Some(node), Some(Self::mul(tokens)));
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        node
+    }
+
+    fn mul(tokens: &mut Peekable<Tokens>) -> Node {
+        let mut node = Self::primary(tokens);
+        while let Some(token) = tokens.peek() {
+            match token.kind {
+                TokenKind::Mul => {
+                    tokens.next();
+                    node = Self::new(TokenKind::Mul, Some(node), Some(Self::primary(tokens)));
+                }
+                TokenKind::Div => {
+                    tokens.next();
+                    node = Self::new(TokenKind::Div, Some(node), Some(Self::primary(tokens)));
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        node
+    }
+
+    fn primary(tokens: &mut Peekable<Tokens>) -> Node {
+        let mut node = Self::new(TokenKind::Number(0), None, None);
+        if let Some(token) = tokens.peek() {
+            if token.kind == TokenKind::Sep(Separator::RoundBracketL) {
+                tokens.next();
+                node = Self::expr(tokens);
+                if let Some(token) = tokens.peek() {
+                    if token.kind != TokenKind::Sep(Separator::RoundBracketR) {
+                        process::exit(1); // TODO parse error message
+                    } else {
+                        tokens.next();
+                    }
+                } else {
+                    process::exit(1); // TODO parse error message
+                }
+            } else if let TokenKind::Number(num) = token.kind {
+                tokens.next();
+                node = Self::new(TokenKind::Number(num), None, None);
+            }
+        }
+        node
+    }
+
+    fn gen(node: Node) {
+        if let TokenKind::Number(num) = node.kind {
+            println!("\tpush {num}");
+            return;
+        }
+        if let Some(lhs) = node.lhs {
+            Self::gen(*lhs);
+        }
+        if let Some(rhs) = node.rhs {
+            Self::gen(*rhs);
+        }
+        println!("\tpop rdi");
+        println!("\tpop rax");
+        match node.kind {
+            TokenKind::Add => {
+                println!("\tadd rax, rdi");
+            }
+            TokenKind::Sub => {
+                println!("\tsub rax, rdi");
+            }
+            TokenKind::Mul => {
+                println!("\timul rax, rdi");
+            }
+            TokenKind::Div => {
+                println!("\tcqo");
+                println!("\tidiv rdi");
+            }
+            _ => unreachable!(), // TODO parse error message
+        }
+        println!("\tpush rax");
+    }
+}
+
+fn compile(input: &str) {
+    let tokens = Tokens::new(input);
+    println!(".intel_syntax noprefix");
+    println!(".global main");
+    println!("main:");
+    let mut tokens = tokens.peekable();
+    let node = Node::expr(&mut tokens);
+    // println!("dbg! {:#?}", node);
+    Node::gen(node);
+    println!("\tpop rax");
+    println!("\tret");
 }
 
 #[test]
@@ -236,7 +295,7 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "5",
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(5),
             span: 0..1
         })
     );
@@ -244,7 +303,7 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "+",
-            kind: TokenKind::Plus,
+            kind: TokenKind::Add,
             span: 1..2
         })
     );
@@ -252,7 +311,7 @@ fn test_tokens_iterator() {
         tokens.next(),
         Some(Token {
             text: "20",
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(20),
             span: 2..4
         })
     );
@@ -266,7 +325,7 @@ fn test_whitespace() {
         tokens.next(),
         Some(Token {
             text: "3",
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(3),
             span: 2..3
         })
     );
@@ -274,7 +333,7 @@ fn test_whitespace() {
         tokens.next(),
         Some(Token {
             text: "-",
-            kind: TokenKind::Minus,
+            kind: TokenKind::Sub,
             span: 5..6
         })
     );
@@ -282,7 +341,7 @@ fn test_whitespace() {
         tokens.next(),
         Some(Token {
             text: "1",
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(1),
             span: 6..7
         })
     );
@@ -290,7 +349,7 @@ fn test_whitespace() {
         tokens.next(),
         Some(Token {
             text: "+",
-            kind: TokenKind::Plus,
+            kind: TokenKind::Add,
             span: 9..10
         })
     );
@@ -298,7 +357,7 @@ fn test_whitespace() {
         tokens.next(),
         Some(Token {
             text: "20",
-            kind: TokenKind::Number,
+            kind: TokenKind::Number(20),
             span: 10..12
         })
     );
