@@ -1,4 +1,6 @@
 use std::env;
+// use std::error;
+// use std::fmt;
 use std::iter::Peekable;
 use std::ops::Range;
 use std::process;
@@ -9,8 +11,43 @@ fn main() {
         eprintln!("example: ./r9cc \"4+3+10-9\"");
         process::exit(1);
     });
-    compile(&arg);
+    let out = compile(&arg); // return Result, match and emit error message. arg is usable.
+    match out {
+        Ok(assemblys) => {
+            println!("{}", assemblys.join("\n"));
+        }
+        Err(err) => {
+            eprintln!("{:#?}", err);
+        }
+    }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+struct RawStream<'a> {
+    src: &'a str,
+    pos: usize,
+}
+
+#[derive(Debug, PartialEq)]
+struct RawTokens<'a> {
+    raw_tokens: Vec<Token<'a>>,
+    index: usize,
+}
+
+impl<'a> Iterator for RawTokens<'a> {
+    type Item = Token<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.index += 1;
+        if self.index > self.raw_tokens.len() {
+            None
+        } else {
+            Some(self.raw_tokens[self.index - 1].clone())
+        }
+    }
+}
+
+type Tokens<'a> = Peekable<RawTokens<'a>>;
 
 #[derive(Debug, Clone, PartialEq)]
 struct Token<'a> {
@@ -18,6 +55,7 @@ struct Token<'a> {
     kind: TokenKind,
     span: Range<usize>, // Token place in Tokens
 }
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Separator {
     RoundBracketL, // '('
@@ -34,15 +72,39 @@ enum TokenKind {
     Sep(Separator),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct Tokens<'a> {
-    src: &'a str,
-    pos: usize,
+#[derive(Debug, PartialEq)]
+struct CompileError {
+    error_type: CompileErrorType,
+    pos: Range<usize>,
 }
 
-impl<'a> Tokens<'a> {
+// impl fmt::Display for CompileError<'a> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         write!(f, "{:?} {:?}", self.error_type, self.pos)
+//     }
+// }
+
+// impl error::Error for CompileError<'_> {}
+
+#[derive(PartialEq, Debug)]
+enum CompileErrorType {
+    Tokenizing(TokenizeError),
+    Parsing(ParseError),
+}
+
+#[derive(PartialEq, Debug)]
+struct TokenizeError(String);
+
+#[derive(PartialEq, Debug)]
+enum ParseError {
+    NotNumber,
+    TrailingOp(String),
+    CannotParse,
+}
+
+impl<'a> RawStream<'a> {
     fn new(src: &'a str) -> Self {
-        Tokens { src, pos: 0 }
+        RawStream { src, pos: 0 }
     }
 
     fn rest(&self) -> &'a str {
@@ -112,15 +174,41 @@ impl<'a> Tokens<'a> {
         }
     }
 
-    fn report_tokenize_error(&self, message: String, src_info: String) {
-        eprintln!("{}", message);
-        eprintln!("{}", self.src);
-        eprintln!("{}^ {}", " ".repeat(self.pos), src_info);
+    fn tokenize_unknown(&mut self) -> CompileError {
+        // read until space
+        let (text, span) = self
+            .take_while(|c| !c.is_ascii_whitespace())
+            .expect("Error: whitespace only.");
+        CompileError {
+            error_type: CompileErrorType::Tokenizing(TokenizeError(text.to_string())),
+            pos: span,
+        }
+    }
+
+    // fn report_tokenize_error(&self, message: String, src_info: String) {
+    //     eprintln!("{}", message);
+    //     eprintln!("{}", self.src);
+    //     eprintln!("{}^ {}", " ".repeat(self.pos), src_info);
+    // }
+
+    // raise tokenize error
+    fn check(&mut self) -> Result<RawTokens, Vec<CompileError>> {
+        let (tokens, errors): (Vec<_>, Vec<_>) = self.into_iter().partition(Result::is_ok);
+        let tokens: Vec<Token> = tokens.into_iter().map(Result::unwrap).collect();
+        let errors: Vec<CompileError> = errors.into_iter().map(Result::unwrap_err).collect();
+        if !errors.is_empty() {
+            Err(errors)
+        } else {
+            Ok(RawTokens {
+                raw_tokens: tokens,
+                index: 0,
+            })
+        }
     }
 }
 
-impl<'a> Iterator for Tokens<'a> {
-    type Item = Token<'a>;
+impl<'a> Iterator for RawStream<'a> {
+    type Item = Result<Token<'a>, CompileError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // ignore spaces
@@ -132,19 +220,19 @@ impl<'a> Iterator for Tokens<'a> {
             }
         }
         return match self.peek()? {
-            '+' => Some(self.tokenize_reserved("+")),
-            '-' => Some(self.tokenize_reserved("-")),
-            '*' => Some(self.tokenize_reserved("*")),
-            '/' => Some(self.tokenize_reserved("/")),
-            '(' => Some(self.tokenize_reserved("(")),
-            ')' => Some(self.tokenize_reserved(")")),
-            '0'..='9' => Some(self.tokenize_number()),
+            '+' => Some(Ok(self.tokenize_reserved("+"))),
+            '-' => Some(Ok(self.tokenize_reserved("-"))),
+            '*' => Some(Ok(self.tokenize_reserved("*"))),
+            '/' => Some(Ok(self.tokenize_reserved("/"))),
+            '(' => Some(Ok(self.tokenize_reserved("("))),
+            ')' => Some(Ok(self.tokenize_reserved(")"))),
+            '0'..='9' => Some(Ok(self.tokenize_number())),
             _ => {
-                self.report_tokenize_error(
-                    "[Error] Cannot tokenize".to_string(),
-                    "cannot tokenize this".to_string(),
-                );
-                process::exit(1);
+                // self.report_tokenize_error(
+                //     "[Error] Cannot tokenize".to_string(),
+                //     "cannot tokenize this".to_string(),
+                // );
+                Some(Err(self.tokenize_unknown()))
             }
         };
     }
@@ -177,53 +265,63 @@ impl Node {
         }
     }
 
-    fn expr(tokens: &mut Peekable<Tokens>) -> Node {
-        let mut node = Self::mul(tokens);
+    fn expr(tokens: &mut Tokens) -> Result<Node, CompileError> {
+        let mut node = Self::mul(tokens)?;
         while let Some(token) = tokens.peek() {
+            let token = token;
             match token.kind {
                 TokenKind::Add => {
                     // println!("dbg! ok?");
                     tokens.next();
-                    node = Self::new(TokenKind::Add, Some(node), Some(Self::mul(tokens)));
+                    node = Self::new(TokenKind::Add, Some(node), Some(Self::mul(tokens)?));
                 }
                 TokenKind::Sub => {
                     tokens.next();
-                    node = Self::new(TokenKind::Sub, Some(node), Some(Self::mul(tokens)));
+                    node = Self::new(TokenKind::Sub, Some(node), Some(Self::mul(tokens)?));
                 }
                 _ => {
                     break;
                 }
             }
+            // match token {
+            //     Ok(token) => {
+
+            //     },
+            //     Err(err) => {
+            //         return Err(err);
+            //     }
+            // }
         }
-        node
+        Ok(node)
     }
 
-    fn mul(tokens: &mut Peekable<Tokens>) -> Node {
-        let mut node = Self::primary(tokens);
+    fn mul(tokens: &mut Tokens) -> Result<Node, CompileError> {
+        let mut node = Self::primary(tokens)?;
         while let Some(token) = tokens.peek() {
             match token.kind {
                 TokenKind::Mul => {
                     tokens.next();
-                    node = Self::new(TokenKind::Mul, Some(node), Some(Self::primary(tokens)));
+                    node = Self::new(TokenKind::Mul, Some(node), Some(Self::primary(tokens)?));
                 }
                 TokenKind::Div => {
                     tokens.next();
-                    node = Self::new(TokenKind::Div, Some(node), Some(Self::primary(tokens)));
+                    node = Self::new(TokenKind::Div, Some(node), Some(Self::primary(tokens)?));
                 }
                 _ => {
                     break;
                 }
             }
         }
-        node
+        Ok(node)
     }
 
-    fn primary(tokens: &mut Peekable<Tokens>) -> Node {
+    fn primary(tokens: &mut Tokens) -> Result<Node, CompileError> {
         let mut node = Self::new(TokenKind::Number(0), None, None);
         if let Some(token) = tokens.peek() {
+            // println!("{:?}", token);
             if token.kind == TokenKind::Sep(Separator::RoundBracketL) {
                 tokens.next();
-                node = Self::expr(tokens);
+                node = Self::expr(tokens)?;
                 if let Some(token) = tokens.peek() {
                     if token.kind != TokenKind::Sep(Separator::RoundBracketR) {
                         process::exit(1); // TODO parse error message
@@ -238,131 +336,172 @@ impl Node {
                 node = Self::new(TokenKind::Number(num), None, None);
             }
         }
-        node
+        Ok(node)
     }
 
-    fn gen(node: Node) {
+    fn gen(assembly: &mut Vec<String>, node: Node) {
         if let TokenKind::Number(num) = node.kind {
-            println!("\tpush {num}");
+            let opcode = format!("\tpush {}", num);
+            // println!("dbg! {}", &opcode);
+            assembly.push(opcode);
             return;
         }
         if let Some(lhs) = node.lhs {
-            Self::gen(*lhs);
+            Self::gen(assembly, *lhs);
         }
         if let Some(rhs) = node.rhs {
-            Self::gen(*rhs);
+            Self::gen(assembly, *rhs);
         }
-        println!("\tpop rdi");
-        println!("\tpop rax");
+        assembly.push("\tpop rdi".to_string());
+        assembly.push("\tpop rax".to_string());
         match node.kind {
             TokenKind::Add => {
-                println!("\tadd rax, rdi");
+                assembly.push("\tadd rax, rdi".to_string());
             }
             TokenKind::Sub => {
-                println!("\tsub rax, rdi");
+                assembly.push("\tsub rax, rdi".to_string());
             }
             TokenKind::Mul => {
-                println!("\timul rax, rdi");
+                assembly.push("\timul rax, rdi".to_string());
             }
             TokenKind::Div => {
-                println!("\tcqo");
-                println!("\tidiv rdi");
+                assembly.push("\tcqo".to_string());
+                assembly.push("\tidiv rdi".to_string());
             }
             _ => unreachable!(), // TODO parse error message
         }
-        println!("\tpush rax");
+        assembly.push("\tpush rax".to_string());
     }
 }
 
-fn compile(input: &str) {
-    let tokens = Tokens::new(input);
-    println!(".intel_syntax noprefix");
-    println!(".global main");
-    println!("main:");
-    let mut tokens = tokens.peekable();
-    let node = Node::expr(&mut tokens);
-    // println!("dbg! {:#?}", node);
-    Node::gen(node);
-    println!("\tpop rax");
-    println!("\tret");
+fn compile(input: &str) -> Result<Vec<String>, Vec<CompileError>> {
+    let mut tokens = RawStream::new(input);
+    let mut assembly: Vec<String> = vec![".intel_syntax noprefix", ".global main", "main:"]
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+    // remove tokenize error and return tokens
+    let tokens = tokens.check()?;
+    let mut tokens = tokens.into_iter().peekable();
+    // let mut tokens = tokens.iter().peekable();
+    // println!("{:?}", tokens);
+    let node = Node::expr(&mut tokens).map_err(|e| vec![e])?;
+    // // println!("dbg! {:#?}", node);
+    Node::gen(&mut assembly, node);
+    assembly.push("\tpop rax".to_string());
+    assembly.push("\tret".to_string());
+    Ok(assembly)
 }
 
 #[test]
 fn test_tokens_iterator() {
     let code = "5+20-4";
-    let mut tokens = Tokens::new(code);
+    let mut tokens = RawStream::new(code);
     assert_eq!(
         tokens.next(),
-        Some(Token {
+        Some(Ok(Token {
             text: "5",
             kind: TokenKind::Number(5),
             span: 0..1
-        })
+        }))
     );
     assert_eq!(
         tokens.next(),
-        Some(Token {
+        Some(Ok(Token {
             text: "+",
             kind: TokenKind::Add,
             span: 1..2
-        })
+        }))
     );
     assert_eq!(
         tokens.next(),
-        Some(Token {
+        Some(Ok(Token {
             text: "20",
             kind: TokenKind::Number(20),
             span: 2..4
-        })
+        }))
     );
 }
 
 #[test]
 fn test_whitespace() {
     let code = "  3  -1  +20  ";
-    let mut tokens = Tokens::new(code);
+    let mut tokens = RawStream::new(code);
     assert_eq!(
         tokens.next(),
-        Some(Token {
+        Some(Ok(Token {
             text: "3",
             kind: TokenKind::Number(3),
             span: 2..3
-        })
+        }))
     );
     assert_eq!(
         tokens.next(),
-        Some(Token {
+        Some(Ok(Token {
             text: "-",
             kind: TokenKind::Sub,
             span: 5..6
-        })
+        }))
     );
     assert_eq!(
         tokens.next(),
-        Some(Token {
+        Some(Ok(Token {
             text: "1",
             kind: TokenKind::Number(1),
             span: 6..7
-        })
+        }))
     );
     assert_eq!(
         tokens.next(),
-        Some(Token {
+        Some(Ok(Token {
             text: "+",
             kind: TokenKind::Add,
             span: 9..10
-        })
+        }))
     );
     assert_eq!(
         tokens.next(),
-        Some(Token {
+        Some(Ok(Token {
             text: "20",
             kind: TokenKind::Number(20),
             span: 10..12
-        })
+        }))
     );
     assert_eq!(tokens.next(), None);
 }
+
+#[test]
+fn test_error_tokenize() {
+    let code = "1+22 + foo + 123 + bar";
+    let mut tokens = RawStream::new(code);
+    tokens.next(); // Number(1)
+    tokens.next(); // Add
+    tokens.next(); // Number(22)
+    tokens.next(); // Add
+    assert_eq!(
+        tokens.next(),
+        Some(Err(CompileError {
+            error_type: CompileErrorType::Tokenizing(TokenizeError("foo".to_string())),
+            pos: 7..10
+        }))
+    );
+    tokens.next(); // Add
+    tokens.next(); // Number(123)
+    tokens.next(); // Add
+    assert_eq!(
+        tokens.next(),
+        Some(Err(CompileError {
+            error_type: CompileErrorType::Tokenizing(TokenizeError("bar".to_string())),
+            pos: 19..22
+        }))
+    );
+}
+
+// #[test]
+// fn test_cannot_tokenize() {
+//     let code = compile("1+22 + foo + 123");
+//     // assert_eq!(code, Err(CompileError::Tokenizing(TokenizeError)));
+// }
 
 // TODO error test
 // test case
