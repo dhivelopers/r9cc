@@ -3,3 +3,4 @@ misc/test-1
 misc/test-2
 tmp
 tmp.s
+generated_test.sh
