@@ -18,6 +18,7 @@ pub struct CompileError {
 pub enum CompileErrorType {
     Tokenizing(TokenizeError),
     Parsing(ParseError),
+    Codegen(CodegenError),
 }
 
 #[derive(PartialEq, Debug)]
@@ -29,4 +30,11 @@ pub enum ParseError {
     TrailingOp,
     CannotParse,
     NotFoundRoundBracketR,
+    NeedSemiColon,
+}
+
+#[derive(PartialEq, Debug)]
+pub enum CodegenError {
+    LValueNotVar,   // left value is not variable
+    RValueNotFound, // assign error
 }
