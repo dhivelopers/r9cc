@@ -75,7 +75,7 @@ enum TokenKind {
 #[derive(Debug, PartialEq)]
 struct CompileError {
     error_type: CompileErrorType,
-    pos: Range<usize>,
+    pos: Option<Range<usize>>,
 }
 
 // impl fmt::Display for CompileError<'a> {
@@ -98,8 +98,9 @@ struct TokenizeError(String);
 #[derive(PartialEq, Debug)]
 enum ParseError {
     NotNumber,
-    TrailingOp(String),
+    TrailingOp,
     CannotParse,
+    NotFoundRoundBracketR,
 }
 
 impl<'a> RawStream<'a> {
@@ -181,7 +182,7 @@ impl<'a> RawStream<'a> {
             .expect("Error: whitespace only.");
         CompileError {
             error_type: CompileErrorType::Tokenizing(TokenizeError(text.to_string())),
-            pos: span,
+            pos: Some(span),
         }
     }
 
@@ -274,6 +275,7 @@ impl Node {
                     // println!("dbg! ok?");
                     tokens.next();
                     node = Self::new(TokenKind::Add, Some(node), Some(Self::mul(tokens)?));
+                    // println!("{:#?}", node);
                 }
                 TokenKind::Sub => {
                     tokens.next();
@@ -283,14 +285,6 @@ impl Node {
                     break;
                 }
             }
-            // match token {
-            //     Ok(token) => {
-
-            //     },
-            //     Err(err) => {
-            //         return Err(err);
-            //     }
-            // }
         }
         Ok(node)
     }
@@ -307,6 +301,12 @@ impl Node {
                     tokens.next();
                     node = Self::new(TokenKind::Div, Some(node), Some(Self::primary(tokens)?));
                 }
+                TokenKind::Number(_) => {
+                    return Err(CompileError {
+                        error_type: CompileErrorType::Parsing(ParseError::CannotParse),
+                        pos: None,
+                    })
+                }
                 _ => {
                     break;
                 }
@@ -316,25 +316,45 @@ impl Node {
     }
 
     fn primary(tokens: &mut Tokens) -> Result<Node, CompileError> {
-        let mut node = Self::new(TokenKind::Number(0), None, None);
+        let node;
         if let Some(token) = tokens.peek() {
+            let span = &token.span;
             // println!("{:?}", token);
             if token.kind == TokenKind::Sep(Separator::RoundBracketL) {
                 tokens.next();
                 node = Self::expr(tokens)?;
                 if let Some(token) = tokens.peek() {
+                    let span = &token.span;
                     if token.kind != TokenKind::Sep(Separator::RoundBracketR) {
-                        process::exit(1); // TODO parse error message
+                        return Err(CompileError {
+                            error_type: CompileErrorType::Parsing(
+                                ParseError::NotFoundRoundBracketR,
+                            ),
+                            pos: Some(span.clone()),
+                        });
                     } else {
                         tokens.next();
                     }
                 } else {
-                    process::exit(1); // TODO parse error message
+                    return Err(CompileError {
+                        error_type: CompileErrorType::Parsing(ParseError::NotFoundRoundBracketR),
+                        pos: None,
+                    });
                 }
             } else if let TokenKind::Number(num) = token.kind {
                 tokens.next();
                 node = Self::new(TokenKind::Number(num), None, None);
+            } else {
+                return Err(CompileError {
+                    error_type: CompileErrorType::Parsing(ParseError::NotNumber),
+                    pos: Some(span.clone()),
+                });
             }
+        } else {
+            return Err(CompileError {
+                error_type: CompileErrorType::Parsing(ParseError::TrailingOp),
+                pos: None,
+            });
         }
         Ok(node)
     }
@@ -482,7 +502,7 @@ fn test_error_tokenize() {
         tokens.next(),
         Some(Err(CompileError {
             error_type: CompileErrorType::Tokenizing(TokenizeError("foo".to_string())),
-            pos: 7..10
+            pos: Some(7..10)
         }))
     );
     tokens.next(); // Add
@@ -492,8 +512,92 @@ fn test_error_tokenize() {
         tokens.next(),
         Some(Err(CompileError {
             error_type: CompileErrorType::Tokenizing(TokenizeError("bar".to_string())),
-            pos: 19..22
+            pos: Some(19..22)
         }))
+    );
+}
+
+#[test]
+fn test_error_parse_not_number_1() {
+    let code = "+1+22 + 123";
+    let out = compile(code);
+    assert!(out.is_err());
+    assert_eq!(
+        out.err().unwrap(),
+        vec![CompileError {
+            error_type: CompileErrorType::Parsing(ParseError::NotNumber),
+            pos: Some(0..1),
+        }]
+    );
+}
+
+#[test]
+fn test_error_parse_not_number_2() {
+    let code = "1++++22 + 123";
+    let out = compile(code);
+    assert!(out.is_err());
+    assert_eq!(
+        out.err().unwrap(),
+        vec![CompileError {
+            error_type: CompileErrorType::Parsing(ParseError::NotNumber),
+            pos: Some(2..3),
+        }]
+    );
+}
+
+#[test]
+fn test_error_parse_trailing_1() {
+    let code = "1+ 123+";
+    let out = compile(code);
+    assert!(out.is_err());
+    assert_eq!(
+        out.err().unwrap(),
+        vec![CompileError {
+            error_type: CompileErrorType::Parsing(ParseError::TrailingOp),
+            pos: None,
+        }]
+    );
+}
+
+#[test]
+fn test_error_parse_trailing_2() {
+    let code = "1+ 123-";
+    let out = compile(code);
+    assert!(out.is_err());
+    assert_eq!(
+        out.err().unwrap(),
+        vec![CompileError {
+            error_type: CompileErrorType::Parsing(ParseError::TrailingOp),
+            pos: None,
+        }]
+    );
+}
+
+#[test]
+fn test_error_parse_not_number_3() {
+    let code = "1+-22 + 123";
+    let out = compile(code);
+    assert!(out.is_err());
+    assert_eq!(
+        out.err().unwrap(),
+        vec![CompileError {
+            error_type: CompileErrorType::Parsing(ParseError::NotNumber),
+            pos: Some(2..3),
+        }]
+    );
+}
+
+#[test]
+fn test_error_parse_cannot() {
+    let code = "1 3 23";
+    let out = compile(code);
+    assert!(out.is_err());
+    assert_eq!(
+        out.err().unwrap(),
+        vec![CompileError {
+            error_type: CompileErrorType::Parsing(ParseError::CannotParse),
+            pos: None,
+        }]
     );
 }
 
@@ -506,11 +610,9 @@ fn test_error_tokenize() {
 // TODO error test
 // test case
 /*
-1+22 + foo + 123 => cannot tokenize this
-+1+22 + foo + 123 => This is not `Number`
-1++++22 + foo + 123 => This is not `Number`
-1+ 123+ => This is end of source code, add `Number` after `+` if needed
-1+ 123- => This is end of source code, add `Number` after `-` if needed
-1+-22 + foo + 123 => This is not `Number`
-1 3 23 => cannot parse this
+"1++++22 + 123" => This is not `Number`
+"1+ 123+" => This is end of source code, add `Number` after `+` if needed
+"1+ 123-" => This is end of source code, add `Number` after `-` if needed
+"1+-22 + 123" => This is not `Number`
+"1 3 23" => cannot parse this
 */
