@@ -70,6 +70,12 @@ enum TokenKind {
     Sub,
     Mul,
     Div,
+    Eq,        // '=='
+    NotEq,     // '!='
+    Less,      // '<'
+    LessEq,    // '<='
+    Greater,   // '>'
+    GreaterEq, // '>='
     Sep(Separator),
 }
 
@@ -117,6 +123,10 @@ impl<'a> RawStream<'a> {
         self.rest().chars().next()
     }
 
+    fn peek2(&self) -> (Option<char>, Option<char>) {
+        (self.rest().chars().next(), self.rest().chars().nth(1))
+    }
+
     fn advance(&mut self) -> Option<char> {
         let c = self.peek()?;
         self.pos += c.len_utf8();
@@ -158,7 +168,9 @@ impl<'a> RawStream<'a> {
 
     fn tokenize_reserved(&mut self, symbol: &'a str) -> Token<'a> {
         let start = self.pos;
-        self.advance();
+        for _ in 0..symbol.len() {
+            self.advance();
+        }
         let end = self.pos;
         let kind = match symbol {
             "+" => TokenKind::Add,
@@ -167,6 +179,12 @@ impl<'a> RawStream<'a> {
             "/" => TokenKind::Div,
             "(" => TokenKind::Sep(Separator::RoundBracketL),
             ")" => TokenKind::Sep(Separator::RoundBracketR),
+            "==" => TokenKind::Eq,
+            "!=" => TokenKind::NotEq,
+            "<" => TokenKind::Less,
+            "<=" => TokenKind::LessEq,
+            ">" => TokenKind::Greater,
+            ">=" => TokenKind::GreaterEq,
             _ => unreachable!(), // reservedは確定しているのでunreachable
         };
         Token {
@@ -229,27 +247,18 @@ impl<'a> Iterator for RawStream<'a> {
             '(' => Some(Ok(self.tokenize_reserved("("))),
             ')' => Some(Ok(self.tokenize_reserved(")"))),
             '0'..='9' => Some(Ok(self.tokenize_number())),
-            _ => {
-                // self.report_tokenize_error(
-                //     "[Error] Cannot tokenize".to_string(),
-                //     "cannot tokenize this".to_string(),
-                // );
-                Some(Err(self.tokenize_unknown()))
-            }
+            _ => match self.peek2() {
+                (Some('='), Some('=')) => Some(Ok(self.tokenize_reserved("=="))),
+                (Some('!'), Some('=')) => Some(Ok(self.tokenize_reserved("!="))),
+                (Some('<'), Some('=')) => Some(Ok(self.tokenize_reserved("<="))),
+                (Some('>'), Some('=')) => Some(Ok(self.tokenize_reserved(">="))),
+                (Some('<'), _) => Some(Ok(self.tokenize_reserved("<"))),
+                (Some('>'), _) => Some(Ok(self.tokenize_reserved(">"))),
+                _ => Some(Err(self.tokenize_unknown())),
+            },
         };
     }
 }
-
-// fn report_parse_error(src: &str, span: Range<usize>, message: String, src_info: String) {
-//     eprintln!("{}", message);
-//     eprintln!("{}", src);
-//     eprintln!(
-//         "{}{} {}",
-//         " ".repeat(span.start),
-//         "^".repeat(span.len()),
-//         src_info
-//     );
-// }
 
 #[derive(Debug, Clone)]
 struct Node {
@@ -268,11 +277,67 @@ impl Node {
     }
 
     fn expr(tokens: &mut Tokens) -> Result<Node, CompileError> {
+        Self::equality(tokens)
+    }
+
+    fn equality(tokens: &mut Tokens) -> Result<Node, CompileError> {
+        let mut node = Self::relational(tokens)?;
+
+        while let Some(token) = tokens.peek() {
+            match token.kind {
+                TokenKind::Eq => {
+                    tokens.next();
+                    node = Self::new(TokenKind::Eq, Some(node), Some(Self::relational(tokens)?));
+                }
+                TokenKind::NotEq => {
+                    tokens.next();
+                    node = Self::new(
+                        TokenKind::NotEq,
+                        Some(node),
+                        Some(Self::relational(tokens)?),
+                    );
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        Ok(node)
+    }
+
+    fn relational(tokens: &mut Tokens) -> Result<Node, CompileError> {
+        let mut node = Self::add(tokens)?;
+        while let Some(token) = tokens.peek() {
+            match token.kind {
+                TokenKind::Less => {
+                    tokens.next();
+                    node = Self::new(TokenKind::Less, Some(node), Some(Self::add(tokens)?));
+                }
+                TokenKind::LessEq => {
+                    tokens.next();
+                    node = Self::new(TokenKind::LessEq, Some(node), Some(Self::add(tokens)?));
+                }
+                TokenKind::Greater => {
+                    tokens.next();
+                    node = Self::new(TokenKind::Less, Some(Self::add(tokens)?), Some(node));
+                }
+                TokenKind::GreaterEq => {
+                    tokens.next();
+                    node = Self::new(TokenKind::LessEq, Some(Self::add(tokens)?), Some(node));
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        Ok(node)
+    }
+
+    fn add(tokens: &mut Tokens) -> Result<Node, CompileError> {
         // println!("{:#?}", tokens);
         let mut node = Self::mul(tokens)?;
         while let Some(token) = tokens.peek() {
             // println!("expr: {:#?}", token);
-            let token = token;
             match token.kind {
                 TokenKind::Add => {
                     // println!("dbg! ok?");
@@ -424,6 +489,26 @@ impl Node {
             TokenKind::Div => {
                 assembly.push("\tcqo".to_string());
                 assembly.push("\tidiv rdi".to_string());
+            }
+            TokenKind::Eq => {
+                assembly.push("\tcmp rax, rdi".to_string());
+                assembly.push("\tsete al".to_string());
+                assembly.push("\tmovzb rax, al".to_string());
+            }
+            TokenKind::NotEq => {
+                assembly.push("\tcmp rax, rdi".to_string());
+                assembly.push("\tsetne al".to_string());
+                assembly.push("\tmovzb rax, al".to_string());
+            }
+            TokenKind::Less => {
+                assembly.push("\tcmp rax, rdi".to_string());
+                assembly.push("\tsetl al".to_string());
+                assembly.push("\tmovzb rax, al".to_string());
+            }
+            TokenKind::LessEq => {
+                assembly.push("\tcmp rax, rdi".to_string());
+                assembly.push("\tsetle al".to_string());
+                assembly.push("\tmovzb rax, al".to_string());
             }
             _ => unreachable!(), // TODO parse error message
         }
