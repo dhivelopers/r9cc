@@ -1,14 +1,7 @@
 text = """
-assert 0 0
-assert 42 42
-assert 21 "5+20-4"
-assert 103 "4 + 100 - 1"
-assert 102 "   4   + 100 - 2   "
-assert 21 "1+2 * 10"
-assert 30 "(1+2 ) * 10"
-assert 47 "5+6*7"
-assert 15 "5*(9-6)"
-assert 4 "(3+5)/2"
+assert 10 '-10+20'
+assert 10 '- -10'
+assert 10 '- - +10'
 """
 
 # use this at project top directory
@@ -23,8 +16,8 @@ for i in range(len(text)):
     inp = inp.split(" ", 1)
     if inp == ['']:
         continue
-    test_out = inp[0].strip("\"")
-    test_in = inp[-1].strip("\"")
+    test_out = inp[0].strip("\"").strip("\'")
+    test_in = inp[-1].strip("\"").strip("\'")
     print(test_in, test_out)
     test_name = input("Input test name\n> ")
     print(test_name)

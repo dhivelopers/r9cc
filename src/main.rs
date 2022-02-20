@@ -17,6 +17,7 @@ fn main() {
             println!("{}", assemblys.join("\n"));
         }
         Err(err) => {
+            eprintln!("Error: (input) {}", arg);
             eprintln!("{:#?}", err);
         }
     }
@@ -267,8 +268,10 @@ impl Node {
     }
 
     fn expr(tokens: &mut Tokens) -> Result<Node, CompileError> {
+        // println!("{:#?}", tokens);
         let mut node = Self::mul(tokens)?;
         while let Some(token) = tokens.peek() {
+            // println!("expr: {:#?}", token);
             let token = token;
             match token.kind {
                 TokenKind::Add => {
@@ -290,21 +293,22 @@ impl Node {
     }
 
     fn mul(tokens: &mut Tokens) -> Result<Node, CompileError> {
-        let mut node = Self::primary(tokens)?;
+        let mut node = Self::unary(tokens)?;
         while let Some(token) = tokens.peek() {
+            // println!("mul: {:#?}", token);
             match token.kind {
                 TokenKind::Mul => {
                     tokens.next();
-                    node = Self::new(TokenKind::Mul, Some(node), Some(Self::primary(tokens)?));
+                    node = Self::new(TokenKind::Mul, Some(node), Some(Self::unary(tokens)?));
                 }
                 TokenKind::Div => {
                     tokens.next();
-                    node = Self::new(TokenKind::Div, Some(node), Some(Self::primary(tokens)?));
+                    node = Self::new(TokenKind::Div, Some(node), Some(Self::unary(tokens)?));
                 }
                 TokenKind::Number(_) => {
                     return Err(CompileError {
                         error_type: CompileErrorType::Parsing(ParseError::CannotParse),
-                        pos: None,
+                        pos: Some(token.span.clone()),
                     })
                 }
                 _ => {
@@ -315,9 +319,42 @@ impl Node {
         Ok(node)
     }
 
+    fn unary(tokens: &mut Tokens) -> Result<Node, CompileError> {
+        let result;
+        // println!("{:#?}", result);
+        if let Some(token) = tokens.peek() {
+            // println!("unary: {:#?}", token);
+            match token.kind {
+                TokenKind::Add => {
+                    // println!("+ {:?}", token.span);
+                    tokens.next();
+                    result = Self::unary(tokens);
+                }
+                TokenKind::Sub => {
+                    tokens.next();
+                    result = Ok(Self::new(
+                        TokenKind::Sub,
+                        Some(Self::new(TokenKind::Number(0), None, None)),
+                        Some(Self::unary(tokens)?),
+                    ));
+                }
+                _ => {
+                    result = Self::primary(tokens);
+                }
+            }
+        } else {
+            return Err(CompileError {
+                error_type: CompileErrorType::Parsing(ParseError::TrailingOp),
+                pos: None,
+            });
+        }
+        result
+    }
+
     fn primary(tokens: &mut Tokens) -> Result<Node, CompileError> {
         let node;
         if let Some(token) = tokens.peek() {
+            // println!("primary: {:#?}", token);
             let span = &token.span;
             // println!("{:?}", token);
             if token.kind == TokenKind::Sep(Separator::RoundBracketL) {
@@ -406,7 +443,7 @@ fn compile(input: &str) -> Result<Vec<String>, Vec<CompileError>> {
     // let mut tokens = tokens.iter().peekable();
     // println!("{:?}", tokens);
     let node = Node::expr(&mut tokens).map_err(|e| vec![e])?;
-    // // println!("dbg! {:#?}", node);
+    // println!("dbg! {:#?}", node);
     Node::gen(&mut assembly, node);
     assembly.push("\tpop rax".to_string());
     assembly.push("\tret".to_string());
@@ -521,13 +558,30 @@ fn test_error_tokenize() {
 fn test_error_parse_not_number_1() {
     let code = "+1+22 + 123";
     let out = compile(code);
-    assert!(out.is_err());
+    assert!(out.is_ok());
     assert_eq!(
-        out.err().unwrap(),
-        vec![CompileError {
-            error_type: CompileErrorType::Parsing(ParseError::NotNumber),
-            pos: Some(0..1),
-        }]
+        out.ok().unwrap(),
+        vec![
+            ".intel_syntax noprefix",
+            ".global main",
+            "main:",
+            "\tpush 1",
+            "\tpush 22",
+            "\tpop rdi",
+            "\tpop rax",
+            "\tadd rax, rdi",
+            "\tpush rax",
+            "\tpush 123",
+            "\tpop rdi",
+            "\tpop rax",
+            "\tadd rax, rdi",
+            "\tpush rax",
+            "\tpop rax",
+            "\tret"
+        ]
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>()
     );
 }
 
@@ -535,13 +589,30 @@ fn test_error_parse_not_number_1() {
 fn test_error_parse_not_number_2() {
     let code = "1++++22 + 123";
     let out = compile(code);
-    assert!(out.is_err());
+    assert!(out.is_ok());
     assert_eq!(
-        out.err().unwrap(),
-        vec![CompileError {
-            error_type: CompileErrorType::Parsing(ParseError::NotNumber),
-            pos: Some(2..3),
-        }]
+        out.ok().unwrap(),
+        vec![
+            ".intel_syntax noprefix",
+            ".global main",
+            "main:",
+            "\tpush 1",
+            "\tpush 22",
+            "\tpop rdi",
+            "\tpop rax",
+            "\tadd rax, rdi",
+            "\tpush rax",
+            "\tpush 123",
+            "\tpop rdi",
+            "\tpop rax",
+            "\tadd rax, rdi",
+            "\tpush rax",
+            "\tpop rax",
+            "\tret"
+        ]
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>()
     );
 }
 
@@ -577,13 +648,35 @@ fn test_error_parse_trailing_2() {
 fn test_error_parse_not_number_3() {
     let code = "1+-22 + 123";
     let out = compile(code);
-    assert!(out.is_err());
+    assert!(out.is_ok());
     assert_eq!(
-        out.err().unwrap(),
-        vec![CompileError {
-            error_type: CompileErrorType::Parsing(ParseError::NotNumber),
-            pos: Some(2..3),
-        }]
+        out.ok().unwrap(),
+        vec![
+            ".intel_syntax noprefix",
+            ".global main",
+            "main:",
+            "\tpush 1",
+            "\tpush 0",
+            "\tpush 22",
+            "\tpop rdi",
+            "\tpop rax",
+            "\tsub rax, rdi",
+            "\tpush rax",
+            "\tpop rdi",
+            "\tpop rax",
+            "\tadd rax, rdi",
+            "\tpush rax",
+            "\tpush 123",
+            "\tpop rdi",
+            "\tpop rax",
+            "\tadd rax, rdi",
+            "\tpush rax",
+            "\tpop rax",
+            "\tret"
+        ]
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>()
     );
 }
 
@@ -596,7 +689,7 @@ fn test_error_parse_cannot() {
         out.err().unwrap(),
         vec![CompileError {
             error_type: CompileErrorType::Parsing(ParseError::CannotParse),
-            pos: None,
+            pos: Some(2..3),
         }]
     );
 }
