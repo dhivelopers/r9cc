@@ -40,10 +40,12 @@ pub struct Token<'a> {
 pub enum Separator {
     RoundBracketL, // '('
     RoundBracketR, // ')'
+    SemiColon,     // ';'
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TokenKind {
+    Ident, // identifier
     Number(i64),
     Add,
     Sub,
@@ -55,6 +57,7 @@ pub enum TokenKind {
     LessEq,    // '<='
     Greater,   // '>'
     GreaterEq, // '>='
+    Assign,    // '='
     Sep(Separator),
 }
 
@@ -127,17 +130,31 @@ impl<'a> RawStream<'a> {
             "/" => TokenKind::Div,
             "(" => TokenKind::Sep(Separator::RoundBracketL),
             ")" => TokenKind::Sep(Separator::RoundBracketR),
+            ";" => TokenKind::Sep(Separator::SemiColon),
             "==" => TokenKind::Eq,
             "!=" => TokenKind::NotEq,
             "<" => TokenKind::Less,
             "<=" => TokenKind::LessEq,
             ">" => TokenKind::Greater,
             ">=" => TokenKind::GreaterEq,
+            "=" => TokenKind::Assign,
             _ => unreachable!(), // reservedは確定しているのでunreachable
         };
         Token {
             text: symbol,
             kind,
+            span: start..end,
+        }
+    }
+
+    fn tokenize_identifier(&mut self) -> Token<'a> {
+        let start = self.pos;
+        self.advance();
+        let end = self.pos;
+        let ident = &self.src[start..end];
+        Token {
+            text: ident,
+            kind: TokenKind::Ident,
             span: start..end,
         }
     }
@@ -188,7 +205,9 @@ impl<'a> Iterator for RawStream<'a> {
             '/' => Some(Ok(self.tokenize_reserved("/"))),
             '(' => Some(Ok(self.tokenize_reserved("("))),
             ')' => Some(Ok(self.tokenize_reserved(")"))),
+            ';' => Some(Ok(self.tokenize_reserved(";"))),
             '0'..='9' => Some(Ok(self.tokenize_number())),
+            'a'..='z' => Some(Ok(self.tokenize_identifier())),
             _ => match self.peek2() {
                 (Some('='), Some('=')) => Some(Ok(self.tokenize_reserved("=="))),
                 (Some('!'), Some('=')) => Some(Ok(self.tokenize_reserved("!="))),
@@ -196,6 +215,7 @@ impl<'a> Iterator for RawStream<'a> {
                 (Some('>'), Some('=')) => Some(Ok(self.tokenize_reserved(">="))),
                 (Some('<'), _) => Some(Ok(self.tokenize_reserved("<"))),
                 (Some('>'), _) => Some(Ok(self.tokenize_reserved(">"))),
+                (Some('='), _) => Some(Ok(self.tokenize_reserved("="))),
                 _ => Some(Err(self.tokenize_unknown())),
             },
         };
@@ -280,28 +300,91 @@ fn test_whitespace() {
 }
 
 #[test]
-fn test_error_tokenize() {
-    let code = "1+22 + foo + 123 + bar";
+fn test_ident() {
+    let code = "a + b - c";
     let mut tokens = RawStream::new(code);
-    tokens.next(); // Number(1)
-    tokens.next(); // Add
-    tokens.next(); // Number(22)
-    tokens.next(); // Add
     assert_eq!(
         tokens.next(),
-        Some(Err(CompileError {
-            error_type: CompileErrorType::Tokenizing(TokenizeError("foo".to_string())),
-            pos: Some(7..10)
+        Some(Ok(Token {
+            text: "a",
+            kind: TokenKind::Ident,
+            span: 0..1
         }))
     );
     tokens.next(); // Add
-    tokens.next(); // Number(123)
-    tokens.next(); // Add
     assert_eq!(
         tokens.next(),
-        Some(Err(CompileError {
-            error_type: CompileErrorType::Tokenizing(TokenizeError("bar".to_string())),
-            pos: Some(19..22)
+        Some(Ok(Token {
+            text: "b",
+            kind: TokenKind::Ident,
+            span: 4..5
+        }))
+    );
+    tokens.next(); // Sub
+    assert_eq!(
+        tokens.next(),
+        Some(Ok(Token {
+            text: "c",
+            kind: TokenKind::Ident,
+            span: 8..9
         }))
     );
 }
+
+#[test]
+fn test_semicolon() {
+    let code = "a + b; c";
+    let mut tokens = RawStream::new(code);
+    assert_eq!(
+        tokens.next(),
+        Some(Ok(Token {
+            text: "a",
+            kind: TokenKind::Ident,
+            span: 0..1
+        }))
+    );
+    tokens.next(); // Add
+    assert_eq!(
+        tokens.next(),
+        Some(Ok(Token {
+            text: "b",
+            kind: TokenKind::Ident,
+            span: 4..5
+        }))
+    );
+    assert_eq!(
+        tokens.next(),
+        Some(Ok(Token {
+            text: ";",
+            kind: TokenKind::Sep(Separator::SemiColon),
+            span: 5..6
+        }))
+    );
+}
+
+// #[test]
+// fn test_error_tokenize() {
+//     let code = "1+22 + foo + 123 + bar";
+//     let mut tokens = RawStream::new(code);
+//     tokens.next(); // Number(1)
+//     tokens.next(); // Add
+//     tokens.next(); // Number(22)
+//     tokens.next(); // Add
+//     assert_eq!(
+//         tokens.next(),
+//         Some(Err(CompileError {
+//             error_type: CompileErrorType::Tokenizing(TokenizeError("foo".to_string())),
+//             pos: Some(7..10)
+//         }))
+//     );
+//     tokens.next(); // Add
+//     tokens.next(); // Number(123)
+//     tokens.next(); // Add
+//     assert_eq!(
+//         tokens.next(),
+//         Some(Err(CompileError {
+//             error_type: CompileErrorType::Tokenizing(TokenizeError("bar".to_string())),
+//             pos: Some(19..22)
+//         }))
+//     );
+// }
