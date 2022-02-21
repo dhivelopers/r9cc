@@ -58,6 +58,7 @@ pub enum TokenKind {
     Greater,   // '>'
     GreaterEq, // '>='
     Assign,    // '='
+    Return,    // 'return'
     Sep(Separator),
 }
 
@@ -147,15 +148,21 @@ impl<'a> RawStream<'a> {
         }
     }
 
-    fn tokenize_identifier(&mut self) -> Token<'a> {
-        let start = self.pos;
-        self.advance();
-        let end = self.pos;
-        let ident = &self.src[start..end];
+    fn tokenize_term(&mut self) -> Token<'a> {
+        let (text, span) = self
+            .take_while(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_'))
+            .expect("Error: identifier is alphabetical");
+        if text == "return" {
+            return Token {
+                text,
+                kind: TokenKind::Return,
+                span,
+            };
+        }
         Token {
-            text: ident,
+            text,
             kind: TokenKind::Ident,
-            span: start..end,
+            span,
         }
     }
 
@@ -207,7 +214,7 @@ impl<'a> Iterator for RawStream<'a> {
             ')' => Some(Ok(self.tokenize_reserved(")"))),
             ';' => Some(Ok(self.tokenize_reserved(";"))),
             '0'..='9' => Some(Ok(self.tokenize_number())),
-            'a'..='z' => Some(Ok(self.tokenize_identifier())),
+            'a'..='z' | 'A'..='Z' | '_' => Some(Ok(self.tokenize_term())),
             _ => match self.peek2() {
                 (Some('='), Some('=')) => Some(Ok(self.tokenize_reserved("=="))),
                 (Some('!'), Some('=')) => Some(Ok(self.tokenize_reserved("!="))),
@@ -362,29 +369,83 @@ fn test_semicolon() {
     );
 }
 
-// #[test]
-// fn test_error_tokenize() {
-//     let code = "1+22 + foo + 123 + bar";
-//     let mut tokens = RawStream::new(code);
-//     tokens.next(); // Number(1)
-//     tokens.next(); // Add
-//     tokens.next(); // Number(22)
-//     tokens.next(); // Add
-//     assert_eq!(
-//         tokens.next(),
-//         Some(Err(CompileError {
-//             error_type: CompileErrorType::Tokenizing(TokenizeError("foo".to_string())),
-//             pos: Some(7..10)
-//         }))
-//     );
-//     tokens.next(); // Add
-//     tokens.next(); // Number(123)
-//     tokens.next(); // Add
-//     assert_eq!(
-//         tokens.next(),
-//         Some(Err(CompileError {
-//             error_type: CompileErrorType::Tokenizing(TokenizeError("bar".to_string())),
-//             pos: Some(19..22)
-//         }))
-//     );
-// }
+#[test]
+fn test_local_var() {
+    let code = "1+22 + foo + 123 + bar;";
+    let mut tokens = RawStream::new(code);
+    tokens.next(); // Number(1)
+    tokens.next(); // Add
+    tokens.next(); // Number(22)
+    tokens.next(); // Add
+    assert_eq!(
+        tokens.next(),
+        Some(Ok(Token {
+            text: "foo",
+            kind: TokenKind::Ident,
+            span: 7..10
+        }))
+    );
+    tokens.next(); // Add
+    tokens.next(); // Number(123)
+    tokens.next(); // Add
+    assert_eq!(
+        tokens.next(),
+        Some(Ok(Token {
+            text: "bar",
+            kind: TokenKind::Ident,
+            span: 19..22
+        }))
+    );
+}
+
+#[test]
+fn test_return() {
+    let code = "a = 3;return a;";
+    let mut tokens = RawStream::new(code);
+    tokens.next(); // a
+    tokens.next(); // assign
+    tokens.next(); // 3
+    tokens.next(); // Sep SemiColon
+    assert_eq!(
+        tokens.next(),
+        Some(Ok(Token {
+            text: "return",
+            kind: TokenKind::Return,
+            span: 6..12
+        }))
+    );
+    assert_eq!(
+        tokens.next(),
+        Some(Ok(Token {
+            text: "a",
+            kind: TokenKind::Ident,
+            span: 13..14
+        }))
+    );
+}
+
+#[test]
+fn test_return_like_ident() {
+    let code = "a = 3;returnx = a;";
+    let mut tokens = RawStream::new(code);
+    tokens.next(); // a
+    tokens.next(); // assign
+    tokens.next(); // 3
+    tokens.next(); // Sep SemiColon
+    assert_eq!(
+        tokens.next(),
+        Some(Ok(Token {
+            text: "returnx",
+            kind: TokenKind::Ident,
+            span: 6..13
+        }))
+    );
+    assert_eq!(
+        tokens.next(),
+        Some(Ok(Token {
+            text: "=",
+            kind: TokenKind::Assign,
+            span: 14..15
+        }))
+    );
+}
