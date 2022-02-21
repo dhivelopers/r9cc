@@ -1,5 +1,12 @@
+use std::collections::HashMap;
+
 use crate::errors::{CompileError, CompileErrorType, ParseError};
 use crate::tokenizer::{Separator, TokenKind, Tokens};
+
+#[derive(Debug)]
+pub struct LocalVar {
+    offset: usize,
+}
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum NodeKind {
@@ -14,9 +21,10 @@ pub enum NodeKind {
     Less,   // '<'
     LessEq, // '<='
     Assign, // '='
+    Return, // 'return'
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Node {
     pub kind: NodeKind,
     pub lhs: Option<Box<Node>>,
@@ -31,68 +39,92 @@ impl Node {
             rhs: rhs.map(Box::new),
         }
     }
+}
 
-    fn offset(s: &str) -> usize {
-        let offset = ((s.chars().next().unwrap() as usize) - ('a' as usize) + 1) * 8;
-        offset
+#[derive(Debug)]
+pub struct Parser {
+    locals: HashMap<String, LocalVar>,
+}
+
+impl Parser {
+    pub fn new() -> Parser {
+        Parser {
+            locals: HashMap::new(),
+        }
     }
 
-    pub fn program(tokens: &mut Tokens) -> Result<Vec<Node>, CompileError> {
+    fn offset(&self) -> usize {
+        (self.locals.len() + 1) * 8
+    }
+
+    pub fn program(&mut self, tokens: &mut Tokens) -> Result<Vec<Node>, CompileError> {
         let mut code = vec![];
         while tokens.peek().is_some() {
-            code.push(Self::stmt(tokens)?);
+            code.push(self.stmt(tokens)?);
         }
         Ok(code)
     }
 
-    fn stmt(tokens: &mut Tokens) -> Result<Node, CompileError> {
-        let node = Self::expr(tokens)?;
+    fn stmt(&mut self, tokens: &mut Tokens) -> Result<Node, CompileError> {
+        let node;
         if let Some(token) = tokens.peek() {
-            match token.kind {
-                TokenKind::Sep(Separator::SemiColon) => {
-                    tokens.next();
-                    Ok(node)
-                }
-                _ => Err(CompileError {
-                    error_type: CompileErrorType::Parsing(ParseError::NeedSemiColon),
-                    pos: Some(token.span.clone()),
-                }),
+            if token.kind == TokenKind::Return {
+                tokens.next();
+                node = Node::new(NodeKind::Return, Some(self.expr(tokens)?), None);
+            } else {
+                node = self.expr(tokens)?;
             }
         } else {
-            Err(CompileError {
+            return Err(CompileError {
+                error_type: CompileErrorType::Parsing(ParseError::Empty),
+                pos: None,
+            });
+        }
+        if let Some(token) = tokens.peek() {
+            if token.kind != TokenKind::Sep(Separator::SemiColon) {
+                return Err(CompileError {
+                    error_type: CompileErrorType::Parsing(ParseError::NeedSemiColon),
+                    pos: Some(token.span.clone()),
+                });
+            } else {
+                tokens.next(); // eat ';'
+            }
+        } else {
+            return Err(CompileError {
                 error_type: CompileErrorType::Parsing(ParseError::NeedSemiColon),
                 pos: None,
-            })
+            });
         }
+        Ok(node)
     }
 
-    fn expr(tokens: &mut Tokens) -> Result<Node, CompileError> {
-        Self::assign(tokens)
+    fn expr(&mut self, tokens: &mut Tokens) -> Result<Node, CompileError> {
+        self.assign(tokens)
     }
 
-    fn assign(tokens: &mut Tokens) -> Result<Node, CompileError> {
-        let mut node = Self::equality(tokens)?;
+    fn assign(&mut self, tokens: &mut Tokens) -> Result<Node, CompileError> {
+        let mut node = self.equality(tokens)?;
         if let Some(token) = tokens.peek() {
             if token.kind == TokenKind::Assign {
                 tokens.next();
-                node = Self::new(NodeKind::Assign, Some(node), Some(Self::assign(tokens)?));
+                node = Node::new(NodeKind::Assign, Some(node), Some(self.assign(tokens)?));
             }
         }
         Ok(node)
     }
 
-    fn equality(tokens: &mut Tokens) -> Result<Node, CompileError> {
-        let mut node = Self::relational(tokens)?;
+    fn equality(&mut self, tokens: &mut Tokens) -> Result<Node, CompileError> {
+        let mut node = self.relational(tokens)?;
 
         while let Some(token) = tokens.peek() {
             match token.kind {
                 TokenKind::Eq => {
                     tokens.next();
-                    node = Self::new(NodeKind::Eq, Some(node), Some(Self::relational(tokens)?));
+                    node = Node::new(NodeKind::Eq, Some(node), Some(self.relational(tokens)?));
                 }
                 TokenKind::NotEq => {
                     tokens.next();
-                    node = Self::new(NodeKind::NotEq, Some(node), Some(Self::relational(tokens)?));
+                    node = Node::new(NodeKind::NotEq, Some(node), Some(self.relational(tokens)?));
                 }
                 _ => {
                     break;
@@ -102,25 +134,25 @@ impl Node {
         Ok(node)
     }
 
-    fn relational(tokens: &mut Tokens) -> Result<Node, CompileError> {
-        let mut node = Self::add(tokens)?;
+    fn relational(&mut self, tokens: &mut Tokens) -> Result<Node, CompileError> {
+        let mut node = self.add(tokens)?;
         while let Some(token) = tokens.peek() {
             match token.kind {
                 TokenKind::Less => {
                     tokens.next();
-                    node = Self::new(NodeKind::Less, Some(node), Some(Self::add(tokens)?));
+                    node = Node::new(NodeKind::Less, Some(node), Some(self.add(tokens)?));
                 }
                 TokenKind::LessEq => {
                     tokens.next();
-                    node = Self::new(NodeKind::LessEq, Some(node), Some(Self::add(tokens)?));
+                    node = Node::new(NodeKind::LessEq, Some(node), Some(self.add(tokens)?));
                 }
                 TokenKind::Greater => {
                     tokens.next();
-                    node = Self::new(NodeKind::Less, Some(Self::add(tokens)?), Some(node));
+                    node = Node::new(NodeKind::Less, Some(self.add(tokens)?), Some(node));
                 }
                 TokenKind::GreaterEq => {
                     tokens.next();
-                    node = Self::new(NodeKind::LessEq, Some(Self::add(tokens)?), Some(node));
+                    node = Node::new(NodeKind::LessEq, Some(self.add(tokens)?), Some(node));
                 }
                 _ => {
                     break;
@@ -130,21 +162,21 @@ impl Node {
         Ok(node)
     }
 
-    fn add(tokens: &mut Tokens) -> Result<Node, CompileError> {
+    fn add(&mut self, tokens: &mut Tokens) -> Result<Node, CompileError> {
         // println!("{:#?}", tokens);
-        let mut node = Self::mul(tokens)?;
+        let mut node = self.mul(tokens)?;
         while let Some(token) = tokens.peek() {
             // println!("expr: {:#?}", token);
             match token.kind {
                 TokenKind::Add => {
                     // println!("dbg! ok?");
                     tokens.next();
-                    node = Self::new(NodeKind::Add, Some(node), Some(Self::mul(tokens)?));
+                    node = Node::new(NodeKind::Add, Some(node), Some(self.mul(tokens)?));
                     // println!("{:#?}", node);
                 }
                 TokenKind::Sub => {
                     tokens.next();
-                    node = Self::new(NodeKind::Sub, Some(node), Some(Self::mul(tokens)?));
+                    node = Node::new(NodeKind::Sub, Some(node), Some(self.mul(tokens)?));
                 }
                 _ => {
                     break;
@@ -154,18 +186,18 @@ impl Node {
         Ok(node)
     }
 
-    fn mul(tokens: &mut Tokens) -> Result<Node, CompileError> {
-        let mut node = Self::unary(tokens)?;
+    fn mul(&mut self, tokens: &mut Tokens) -> Result<Node, CompileError> {
+        let mut node = self.unary(tokens)?;
         while let Some(token) = tokens.peek() {
             // println!("mul: {:#?}", token);
             match token.kind {
                 TokenKind::Mul => {
                     tokens.next();
-                    node = Self::new(NodeKind::Mul, Some(node), Some(Self::unary(tokens)?));
+                    node = Node::new(NodeKind::Mul, Some(node), Some(self.unary(tokens)?));
                 }
                 TokenKind::Div => {
                     tokens.next();
-                    node = Self::new(NodeKind::Div, Some(node), Some(Self::unary(tokens)?));
+                    node = Node::new(NodeKind::Div, Some(node), Some(self.unary(tokens)?));
                 }
                 TokenKind::Number(_) => {
                     return Err(CompileError {
@@ -181,7 +213,7 @@ impl Node {
         Ok(node)
     }
 
-    fn unary(tokens: &mut Tokens) -> Result<Node, CompileError> {
+    fn unary(&mut self, tokens: &mut Tokens) -> Result<Node, CompileError> {
         let result;
         // println!("{:#?}", result);
         if let Some(token) = tokens.peek() {
@@ -190,18 +222,18 @@ impl Node {
                 TokenKind::Add => {
                     // println!("+ {:?}", token.span);
                     tokens.next();
-                    result = Self::unary(tokens);
+                    result = self.unary(tokens);
                 }
                 TokenKind::Sub => {
                     tokens.next();
-                    result = Ok(Self::new(
+                    result = Ok(Node::new(
                         NodeKind::Sub,
-                        Some(Self::new(NodeKind::Number(0), None, None)),
-                        Some(Self::unary(tokens)?),
+                        Some(Node::new(NodeKind::Number(0), None, None)),
+                        Some(self.unary(tokens)?),
                     ));
                 }
                 _ => {
-                    result = Self::primary(tokens);
+                    result = self.primary(tokens);
                 }
             }
         } else {
@@ -213,7 +245,7 @@ impl Node {
         result
     }
 
-    fn primary(tokens: &mut Tokens) -> Result<Node, CompileError> {
+    fn primary(&mut self, tokens: &mut Tokens) -> Result<Node, CompileError> {
         let node;
         if let Some(token) = tokens.peek() {
             // println!("primary: {:#?}", token);
@@ -221,7 +253,7 @@ impl Node {
             // println!("{:?}", token);
             if token.kind == TokenKind::Sep(Separator::RoundBracketL) {
                 tokens.next();
-                node = Self::expr(tokens)?;
+                node = self.expr(tokens)?;
                 if let Some(token) = tokens.peek() {
                     let span = &token.span;
                     if token.kind != TokenKind::Sep(Separator::RoundBracketR) {
@@ -242,12 +274,21 @@ impl Node {
                 }
             } else if let TokenKind::Number(num) = token.kind {
                 tokens.next();
-                node = Self::new(NodeKind::Number(num), None, None);
+                node = Node::new(NodeKind::Number(num), None, None);
             } else if let TokenKind::Ident = token.kind {
+                // Convert `ident` -> `var`
                 let ident = token.text;
-                let offset = Self::offset(ident);
+                // Search offset by ident name
+                #[allow(clippy::map_entry)]
+                let offset = if !self.locals.contains_key(&ident.to_string()) {
+                    let offset = self.offset();
+                    self.locals.insert(ident.to_string(), LocalVar { offset });
+                    offset
+                } else {
+                    self.locals[&ident.to_string()].offset
+                };
                 tokens.next();
-                return Ok(Self::new(NodeKind::Var(offset), None, None));
+                return Ok(Node::new(NodeKind::Var(offset), None, None));
             } else {
                 return Err(CompileError {
                     error_type: CompileErrorType::Parsing(ParseError::NotNumber),

@@ -31,6 +31,7 @@ pub enum ParseError {
     CannotParse,
     NotFoundRoundBracketR,
     NeedSemiColon,
+    Empty,
 }
 
 #[derive(PartialEq, Debug)]
